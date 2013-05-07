@@ -17,7 +17,10 @@ For example, we can start our first raftd node like this:
 ```sh
 $ mkdir ~/raftd.1
 $ cd ~/raftd.1
-$ raftd localhost:4001
+$ raftd
+Enter host:port> localhost:4001
+Initialize or join? [ij] i
+New raftd cluster created.
 ```
 
 The server uses the present working directory as its storage so make sure you start with a directory specifically for your server instance.
@@ -30,7 +33,11 @@ To add more nodes, simply start the server from new directories.
 ```sh
 $ mkdir ~/raftd.2
 $ cd ~/raftd.2
-$ raftd --join localhost:4001 localhost:4002
+$ raftd
+Enter host:port> localhost:4002
+Initialize or join? [ij] j
+Server to join: localhost:4001
+Joining cluster... joined.
 ```
 
 This will start a node named `localhost:4002` that will attempt to connect to the first node we started.
