@@ -1,8 +1,8 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"github.com/benbjohnson/go-raft"
@@ -11,6 +11,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"strings"
 	"os"
 )
 
@@ -59,11 +60,14 @@ func main() {
 
 	// Read server info from file or grab it from user.
 	var info *Info = getInfo(path)
-	name := fmt.Sprintf("%s:%d\n", info.Host, info.Port)
-	fmt.Printf("Name: %s\n", name)
+	name := fmt.Sprintf("%s:%d", info.Host, info.Port)
+	fmt.Printf("Name: %s\n\n", name)
 	
 	// Setup new raft server.
 	server, err = raft.NewServer(name, path)
+	server.DoHandler = DoHandler;
+	server.AppendEntriesHandler = AppendEntriesHandler;
+	server.RequestVoteHandler = RequestVoteHandler;
 	if err != nil {
 		fatal("%v", err)
 	}
@@ -82,12 +86,12 @@ func main() {
 		}
 	}
 
-	// TODO: Setup handler functions.
-
 	// Create HTTP interface.
     r := mux.NewRouter()
-    r.HandleFunc("/join", JoinHandler).Methods("POST")
-    r.HandleFunc("/log", GetLogHandler).Methods("GET")
+    r.HandleFunc("/join", JoinHttpHandler).Methods("POST")
+    r.HandleFunc("/vote", VoteHttpHandler).Methods("POST")
+    r.HandleFunc("/log", GetLogHttpHandler).Methods("GET")
+    r.HandleFunc("/log/append", AppendEntriesHttpHandler).Methods("POST")
     http.Handle("/", r)
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", info.Port), nil))
 }
@@ -119,6 +123,7 @@ func getInfo(path string) *Info {
 	} else {
 		fmt.Printf("Enter hostname: [localhost] ");
 		fmt.Scanf("%s", &info.Host)
+		info.Host = strings.TrimSpace(info.Host)
 		if info.Host == "" {
 			info.Host = "localhost"
 		}
@@ -142,23 +147,116 @@ func getInfo(path string) *Info {
 
 
 //--------------------------------------
+// Handlers
+//--------------------------------------
+
+// Forwards requests to the leader.
+func DoHandler(server *raft.Server, peer *raft.Peer, _command raft.Command) error {
+	if command, ok := _command.(*raft.JoinCommand); ok {
+		var b bytes.Buffer
+		json.NewEncoder(&b).Encode(command)
+		resp, err := http.Post(fmt.Sprintf("http://%s/join", peer.Name()), "application/json", &b)
+		status("joining %v", b.String())
+		if resp != nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return nil
+			}
+		}
+		return fmt.Errorf("raftd: Unable to join: %v", err)
+	}
+	return fmt.Errorf("raftd: Unsupported command: %v", _command)
+}
+
+// Sends AppendEntries RPCs to a peer when the server is the leader.
+func AppendEntriesHandler(server *raft.Server, peer *raft.Peer, req *raft.AppendEntriesRequest) (*raft.AppendEntriesResponse, error) {
+	var aersp *raft.AppendEntriesResponse
+	var b bytes.Buffer
+	json.NewEncoder(&b).Encode(req)
+	status("append -> %v %s : %v", peer.Name(), b.String())
+	resp, err := http.Post(fmt.Sprintf("http://%s/log/append", peer.Name()), "application/json", &b)
+	if resp != nil {
+		aersp = &raft.AppendEntriesResponse{}
+		if err = json.NewDecoder(resp.Body).Decode(&aersp); err == nil || err == io.EOF {
+			warn(">> %v", aersp)
+			return aersp, nil
+		}
+	}
+	warn("raftd: Unable to append entries [%s]: %v", peer.Name(), err)
+	return aersp, fmt.Errorf("raftd: Unable to append entries: %v", err)
+}
+
+// Sends RequestVote RPCs to a peer when the server is the candidate.
+func RequestVoteHandler(server *raft.Server, peer *raft.Peer, req *raft.RequestVoteRequest) (*raft.RequestVoteResponse, error) {
+	status("request_vote -> %v", peer.Name())
+	var rvrsp *raft.RequestVoteResponse
+	var b bytes.Buffer
+	json.NewEncoder(&b).Encode(req)
+	resp, err := http.Post(fmt.Sprintf("http://%s/vote", peer.Name()), "application/json", &b)
+	if resp != nil {
+		rvrsp := &raft.RequestVoteResponse{}
+		if err = json.NewDecoder(resp.Body).Decode(&rvrsp); err == nil || err == io.EOF {
+			return rvrsp, nil
+		}
+	}
+	return rvrsp, fmt.Errorf("raftd: Unable to request vote: %v", err)
+}
+
+//--------------------------------------
 // HTTP Handlers
 //--------------------------------------
 
-func GetLogHandler(w http.ResponseWriter, req *http.Request) {
+func GetLogHttpHandler(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(server.LogEntries())
 }
 
-func JoinHandler(w http.ResponseWriter, req *http.Request) {
+func JoinHttpHandler(w http.ResponseWriter, req *http.Request) {
 	command := &raft.JoinCommand{}
-	if err := decodeJsonRequest(req, command); err != nil {
-		server.Do(command)
-		w.WriteHeader(http.StatusOK)
+	if err := decodeJsonRequest(req, command); err == nil {
+		status("[join] %v", command.Name)
+		if err = server.Do(command); err != nil {
+			warn("raftd: Unable to join: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+		} else {
+			w.WriteHeader(http.StatusOK)
+		}
 	} else {
+		warn("[join] ERROR: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
 	}
+}
+
+func VoteHttpHandler(w http.ResponseWriter, req *http.Request) {
+	status("POST /vote")
+	rvreq := &raft.RequestVoteRequest{}
+	err := decodeJsonRequest(req, rvreq)
+	if err == nil {
+		if resp, err := server.RequestVote(rvreq); err == nil {
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(resp)
+		}
+	}
+	warn("[vote] ERROR: %v", err)
+	w.WriteHeader(http.StatusInternalServerError)
+}
+
+func AppendEntriesHttpHandler(w http.ResponseWriter, req *http.Request) {
+	status("POST /log/append")
+	aereq := &raft.AppendEntriesRequest{}
+	err := decodeJsonRequest(req, aereq)
+	if err == nil {
+		if resp, err := server.AppendEntries(aereq); err == nil {
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(resp)
+			return
+		} else {
+			warn("err! %v", err)
+		}
+	}
+	warn("[append] ERROR: %v", err)
+	w.WriteHeader(http.StatusInternalServerError)
 }
 
 
@@ -169,8 +267,8 @@ func JoinHandler(w http.ResponseWriter, req *http.Request) {
 func decodeJsonRequest(req *http.Request, data interface{}) error {
 	decoder := json.NewDecoder(req.Body)
 	if err := decoder.Decode(&data); err != nil && err != io.EOF {
-		logger.Println("Malformed json request.")
-		return errors.New("Malformed json request.")
+		logger.Println("Malformed json request: %v", err)
+		return fmt.Errorf("Malformed json request: %v", err)
 	}
 	return nil
 }
@@ -188,6 +286,11 @@ func encodeJsonResponse(w http.ResponseWriter, status int, data interface{}) {
 //--------------------------------------
 // Utility
 //--------------------------------------
+
+// Writes the current status to the command line.
+func status(msg string, v ...interface{}) {
+	fmt.Fprintf(os.Stderr, msg+"\r", v...)
+}
 
 // Writes to standard error.
 func warn(msg string, v ...interface{}) {
