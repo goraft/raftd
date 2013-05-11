@@ -67,6 +67,9 @@ func main() {
 		fmt.Println("Verbose logging enabled.\n")
 	}
 
+	// Setup commands.
+	raft.RegisterCommand(&WriteFileCommand{})
+	
 	// Use the present working directory if a directory was not passed in.
 	var path string
 	if flag.NArg() == 0 {
@@ -114,6 +117,8 @@ func main() {
     r.HandleFunc("/vote", VoteHttpHandler).Methods("POST")
     r.HandleFunc("/log", GetLogHttpHandler).Methods("GET")
     r.HandleFunc("/log/append", AppendEntriesHttpHandler).Methods("POST")
+    r.HandleFunc("/files/{filename}", ReadFileHttpHandler).Methods("GET")
+    r.HandleFunc("/files/{filename}", WriteFileHttpHandler).Methods("POST")
     http.Handle("/", r)
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", info.Port), nil))
 }
@@ -278,6 +283,40 @@ func AppendEntriesHttpHandler(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(http.StatusInternalServerError)
 }
 
+func WriteFileHttpHandler(w http.ResponseWriter, req *http.Request) {
+	vars := mux.Vars(req)
+	debug("[recv] POST http://%v/files/%s", server.Name(), vars["filename"])
+
+	content, err := ioutil.ReadAll(req.Body)
+	if err != nil {
+		warn("raftd: Unable to read: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return 
+	}
+	
+	command := &WriteFileCommand{}
+	command.Filename = vars["filename"]
+	command.Content = string(content)
+	if err = server.Do(command); err != nil {
+		warn("raftd: Unable to write file: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+	} else {
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
+func ReadFileHttpHandler(w http.ResponseWriter, req *http.Request) {
+	vars := mux.Vars(req)
+	debug("[recv] GET http://%v/files/%s", server.Name(), vars["filename"])
+
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(http.StatusOK)
+	path := fmt.Sprintf("%s/%s", server.Path(), vars["filename"])
+	if content, err := ioutil.ReadFile(path); err == nil {
+		w.Write(content)
+	}
+}
+
 
 //--------------------------------------
 // HTTP Utilities
@@ -323,4 +362,35 @@ func warn(msg string, v ...interface{}) {
 func fatal(msg string, v ...interface{}) {
 	logger.Printf("FATAL " + msg + "\n", v...)
 	os.Exit(1)
+}
+
+
+//------------------------------------------------------------------------------
+//
+// WriteFileCommand
+//
+//------------------------------------------------------------------------------
+
+// This command allows a server write content to a file. Currently it only
+// supports UTF-8 characters in the content.
+type WriteFileCommand struct {
+	Filename string `json:"filename"`
+	Content string `json:"content"`
+}
+
+// The name of the command in the log.
+func (c *WriteFileCommand) CommandName() string {
+	return "file:write"
+}
+
+// Validates that the command can be executed on the current state machine.
+func (c *WriteFileCommand) Validate(server *raft.Server) error {
+	// TODO: Check that the file location is writeable.
+	return nil
+}
+
+// Writes the contents to the file.
+func (c *WriteFileCommand) Apply(server *raft.Server) {
+	path := fmt.Sprintf("%s/%s", server.Path(), c.Filename)
+	ioutil.WriteFile(path, []byte(c.Content), 0644)
 }
