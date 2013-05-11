@@ -18,6 +18,19 @@ import (
 
 //------------------------------------------------------------------------------
 //
+// Initialization
+//
+//------------------------------------------------------------------------------
+
+var verbose bool
+
+func init() {
+	flag.BoolVar(&verbose, "v", false, "verbose logging")
+	flag.BoolVar(&verbose, "verbose", false, "verbose logging")
+}
+
+//------------------------------------------------------------------------------
+//
 // Typedefs
 //
 //------------------------------------------------------------------------------
@@ -50,6 +63,9 @@ func main() {
 	var err error
 	logger = log.New(os.Stdout, "", log.LstdFlags)
 	flag.Parse()
+	if verbose {
+		fmt.Println("Verbose logging enabled.\n")
+	}
 
 	// Use the present working directory if a directory was not passed in.
 	var path string
@@ -161,7 +177,7 @@ func DoHandler(server *raft.Server, peer *raft.Peer, _command raft.Command) erro
 	if command, ok := _command.(*raft.JoinCommand); ok {
 		var b bytes.Buffer
 		json.NewEncoder(&b).Encode(command)
-		warn("[send] POST http://%v/join", peer.Name())
+		debug("[send] POST http://%v/join", peer.Name())
 		resp, err := http.Post(fmt.Sprintf("http://%s/join", peer.Name()), "application/json", &b)
 		if resp != nil {
 			resp.Body.Close()
@@ -179,7 +195,7 @@ func AppendEntriesHandler(server *raft.Server, peer *raft.Peer, req *raft.Append
 	var aersp *raft.AppendEntriesResponse
 	var b bytes.Buffer
 	json.NewEncoder(&b).Encode(req)
-	warn("[send] POST http://%s/log/append [%d]", peer.Name(), len(req.Entries))
+	debug("[send] POST http://%s/log/append [%d]", peer.Name(), len(req.Entries))
 	resp, err := http.Post(fmt.Sprintf("http://%s/log/append", peer.Name()), "application/json", &b)
 	if resp != nil {
 		aersp = &raft.AppendEntriesResponse{}
@@ -192,10 +208,10 @@ func AppendEntriesHandler(server *raft.Server, peer *raft.Peer, req *raft.Append
 
 // Sends RequestVote RPCs to a peer when the server is the candidate.
 func RequestVoteHandler(server *raft.Server, peer *raft.Peer, req *raft.RequestVoteRequest) (*raft.RequestVoteResponse, error) {
-	warn("request_vote -> %v", peer.Name())
 	var rvrsp *raft.RequestVoteResponse
 	var b bytes.Buffer
 	json.NewEncoder(&b).Encode(req)
+	debug("[send] POST http://%s/vote", peer.Name())
 	resp, err := http.Post(fmt.Sprintf("http://%s/vote", peer.Name()), "application/json", &b)
 	if resp != nil {
 		rvrsp := &raft.RequestVoteResponse{}
@@ -211,14 +227,14 @@ func RequestVoteHandler(server *raft.Server, peer *raft.Peer, req *raft.RequestV
 //--------------------------------------
 
 func GetLogHttpHandler(w http.ResponseWriter, req *http.Request) {
-	warn("[recv] GET http://%v/log", server.Name())
+	debug("[recv] GET http://%v/log", server.Name())
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(server.LogEntries())
 }
 
 func JoinHttpHandler(w http.ResponseWriter, req *http.Request) {
-	warn("[recv] POST http://%v/join", server.Name())
+	debug("[recv] POST http://%v/join", server.Name())
 	command := &raft.JoinCommand{}
 	if err := decodeJsonRequest(req, command); err == nil {
 		if err = server.Do(command); err != nil {
@@ -234,10 +250,10 @@ func JoinHttpHandler(w http.ResponseWriter, req *http.Request) {
 }
 
 func VoteHttpHandler(w http.ResponseWriter, req *http.Request) {
-	warn("[recv] POST http://%v/vote", server.Name())
 	rvreq := &raft.RequestVoteRequest{}
 	err := decodeJsonRequest(req, rvreq)
 	if err == nil {
+		debug("[recv] POST http://%v/vote [%s]", server.Name(), rvreq.CandidateName)
 		if resp, _ := server.RequestVote(rvreq); resp != nil {
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(resp)
@@ -251,7 +267,7 @@ func AppendEntriesHttpHandler(w http.ResponseWriter, req *http.Request) {
 	aereq := &raft.AppendEntriesRequest{}
 	err := decodeJsonRequest(req, aereq)
 	if err == nil {
-		warn("[recv] POST http://%s/log/append [%d]", server.Name(), len(aereq.Entries))
+		debug("[recv] POST http://%s/log/append [%d]", server.Name(), len(aereq.Entries))
 		if resp, _ := server.AppendEntries(aereq); resp != nil {
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(resp)
@@ -287,21 +303,24 @@ func encodeJsonResponse(w http.ResponseWriter, status int, data interface{}) {
 }
 
 //--------------------------------------
-// Utility
+// Log
 //--------------------------------------
 
-// Writes the current status to the command line.
-func status(msg string, v ...interface{}) {
-	fmt.Fprintf(os.Stderr, msg+"\r", v...)
+func debug(msg string, v ...interface{}) {
+	if verbose {
+		logger.Printf("DEBUG " + msg + "\n", v...)
+	}
 }
 
-// Writes to standard error.
+func info(msg string, v ...interface{}) {
+	logger.Printf("INFO  " + msg + "\n", v...)
+}
+
 func warn(msg string, v ...interface{}) {
-	fmt.Fprintf(os.Stderr, msg+"\n", v...)
+	logger.Printf("WARN  " + msg + "\n", v...)
 }
 
-// Writes to standard error and dies.
 func fatal(msg string, v ...interface{}) {
-	warn(msg, v)
+	logger.Printf("FATAL " + msg + "\n", v...)
 	os.Exit(1)
 }
