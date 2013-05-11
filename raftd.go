@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strings"
 	"os"
+	"time"
 )
 
 //------------------------------------------------------------------------------
@@ -56,6 +57,9 @@ func main() {
 		path, _ = os.Getwd()
 	} else {
 		path = flag.Arg(0)
+		if err := os.MkdirAll(path, 0744); err != nil {
+			fatal("Unable to create path: %v", err)
+		}
 	}
 
 	// Read server info from file or grab it from user.
@@ -68,6 +72,8 @@ func main() {
 	server.DoHandler = DoHandler;
 	server.AppendEntriesHandler = AppendEntriesHandler;
 	server.RequestVoteHandler = RequestVoteHandler;
+	server.SetElectionTimeout(2 * time.Second)
+	server.SetHeartbeatTimeout(1 * time.Second)
 	if err != nil {
 		fatal("%v", err)
 	}
@@ -138,7 +144,7 @@ func getInfo(path string) *Info {
 		content, _ := json.Marshal(info)
 		content = []byte(string(content) + "\n")
 		if err := ioutil.WriteFile(infoPath, content, 0644); err != nil {
-			fatal("Unable to write info to file")
+			fatal("Unable to write info to file: %v", err)
 		}
 	}
 	
@@ -155,8 +161,8 @@ func DoHandler(server *raft.Server, peer *raft.Peer, _command raft.Command) erro
 	if command, ok := _command.(*raft.JoinCommand); ok {
 		var b bytes.Buffer
 		json.NewEncoder(&b).Encode(command)
+		warn("[send] POST http://%v/join", peer.Name())
 		resp, err := http.Post(fmt.Sprintf("http://%s/join", peer.Name()), "application/json", &b)
-		status("joining %v", b.String())
 		if resp != nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
@@ -173,22 +179,20 @@ func AppendEntriesHandler(server *raft.Server, peer *raft.Peer, req *raft.Append
 	var aersp *raft.AppendEntriesResponse
 	var b bytes.Buffer
 	json.NewEncoder(&b).Encode(req)
-	status("append -> %v %s : %v", peer.Name(), b.String())
+	warn("[send] POST http://%s/log/append [%d]", peer.Name(), len(req.Entries))
 	resp, err := http.Post(fmt.Sprintf("http://%s/log/append", peer.Name()), "application/json", &b)
 	if resp != nil {
 		aersp = &raft.AppendEntriesResponse{}
 		if err = json.NewDecoder(resp.Body).Decode(&aersp); err == nil || err == io.EOF {
-			warn(">> %v", aersp)
 			return aersp, nil
 		}
 	}
-	warn("raftd: Unable to append entries [%s]: %v", peer.Name(), err)
 	return aersp, fmt.Errorf("raftd: Unable to append entries: %v", err)
 }
 
 // Sends RequestVote RPCs to a peer when the server is the candidate.
 func RequestVoteHandler(server *raft.Server, peer *raft.Peer, req *raft.RequestVoteRequest) (*raft.RequestVoteResponse, error) {
-	status("request_vote -> %v", peer.Name())
+	warn("request_vote -> %v", peer.Name())
 	var rvrsp *raft.RequestVoteResponse
 	var b bytes.Buffer
 	json.NewEncoder(&b).Encode(req)
@@ -207,15 +211,16 @@ func RequestVoteHandler(server *raft.Server, peer *raft.Peer, req *raft.RequestV
 //--------------------------------------
 
 func GetLogHttpHandler(w http.ResponseWriter, req *http.Request) {
+	warn("[recv] GET http://%v/log", server.Name())
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(server.LogEntries())
 }
 
 func JoinHttpHandler(w http.ResponseWriter, req *http.Request) {
+	warn("[recv] POST http://%v/join", server.Name())
 	command := &raft.JoinCommand{}
 	if err := decodeJsonRequest(req, command); err == nil {
-		status("[join] %v", command.Name)
 		if err = server.Do(command); err != nil {
 			warn("raftd: Unable to join: %v", err)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -229,30 +234,28 @@ func JoinHttpHandler(w http.ResponseWriter, req *http.Request) {
 }
 
 func VoteHttpHandler(w http.ResponseWriter, req *http.Request) {
-	status("POST /vote")
+	warn("[recv] POST http://%v/vote", server.Name())
 	rvreq := &raft.RequestVoteRequest{}
 	err := decodeJsonRequest(req, rvreq)
 	if err == nil {
-		if resp, err := server.RequestVote(rvreq); err == nil {
+		if resp, _ := server.RequestVote(rvreq); resp != nil {
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(resp)
+			return
 		}
 	}
-	warn("[vote] ERROR: %v", err)
 	w.WriteHeader(http.StatusInternalServerError)
 }
 
 func AppendEntriesHttpHandler(w http.ResponseWriter, req *http.Request) {
-	status("POST /log/append")
 	aereq := &raft.AppendEntriesRequest{}
 	err := decodeJsonRequest(req, aereq)
 	if err == nil {
-		if resp, err := server.AppendEntries(aereq); err == nil {
+		warn("[recv] POST http://%s/log/append [%d]", server.Name(), len(aereq.Entries))
+		if resp, _ := server.AppendEntries(aereq); resp != nil {
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(resp)
 			return
-		} else {
-			warn("err! %v", err)
 		}
 	}
 	warn("[append] ERROR: %v", err)
