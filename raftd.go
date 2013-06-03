@@ -69,6 +69,7 @@ func main() {
 
 	// Setup commands.
 	raft.RegisterCommand(&WriteFileCommand{})
+	raft.RegisterCommand(&joinCommand{})
 	
 	// Use the present working directory if a directory was not passed in.
 	var path string
@@ -86,11 +87,11 @@ func main() {
 	name := fmt.Sprintf("%s:%d", info.Host, info.Port)
 	fmt.Printf("Name: %s\n\n", name)
 	
+	t := transHandler{}
+
 	// Setup new raft server.
-	server, err = raft.NewServer(name, path)
-	server.DoHandler = DoHandler;
-	server.AppendEntriesHandler = AppendEntriesHandler;
-	server.RequestVoteHandler = RequestVoteHandler;
+	server, err = raft.NewServer(name, path, t)
+	//server.DoHandler = DoHandler;
 	server.SetElectionTimeout(2 * time.Second)
 	server.SetHeartbeatTimeout(1 * time.Second)
 	if err != nil {
@@ -105,9 +106,9 @@ func main() {
 		fmt.Printf("Join to (host:port)> ");
 		fmt.Scanf("%s", &leaderHost)
 		if leaderHost == "" {
-			server.Join(server.Name())
+			server.Initialize()
 		} else {
-			server.Join(leaderHost)
+			join(server)
 		}
 	}
 
@@ -177,26 +178,30 @@ func getInfo(path string) *Info {
 // Handlers
 //--------------------------------------
 
-// Forwards requests to the leader.
-func DoHandler(server *raft.Server, peer *raft.Peer, _command raft.Command) error {
-	if command, ok := _command.(*raft.JoinCommand); ok {
-		var b bytes.Buffer
-		json.NewEncoder(&b).Encode(command)
-		debug("[send] POST http://%v/join", peer.Name())
-		resp, err := http.Post(fmt.Sprintf("http://%s/join", peer.Name()), "application/json", &b)
-		if resp != nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return nil
-			}
+// Send join requests to the leader.
+func join(s *raft.Server) error {
+	var b bytes.Buffer
+	command := &joinCommand{}
+	command.Name = s.Name()
+
+	json.NewEncoder(&b).Encode(command)
+	debug("[send] POST http://%v/join", "localhost:4001")
+	resp, err := http.Post(fmt.Sprintf("http://%s/join", "localhost:4001"), "application/json", &b)
+	if resp != nil {
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			return nil
 		}
-		return fmt.Errorf("raftd: Unable to join: %v", err)
 	}
-	return fmt.Errorf("raftd: Unsupported command: %v", _command)
+	return fmt.Errorf("raftd: Unable to join: %v", err)
+}
+
+type transHandler struct {
+	name string
 }
 
 // Sends AppendEntries RPCs to a peer when the server is the leader.
-func AppendEntriesHandler(server *raft.Server, peer *raft.Peer, req *raft.AppendEntriesRequest) (*raft.AppendEntriesResponse, error) {
+func (t transHandler) SendAppendEntriesRequest(server *raft.Server, peer *raft.Peer, req *raft.AppendEntriesRequest) (*raft.AppendEntriesResponse, error) {
 	var aersp *raft.AppendEntriesResponse
 	var b bytes.Buffer
 	json.NewEncoder(&b).Encode(req)
@@ -212,7 +217,7 @@ func AppendEntriesHandler(server *raft.Server, peer *raft.Peer, req *raft.Append
 }
 
 // Sends RequestVote RPCs to a peer when the server is the candidate.
-func RequestVoteHandler(server *raft.Server, peer *raft.Peer, req *raft.RequestVoteRequest) (*raft.RequestVoteResponse, error) {
+func (t transHandler) SendVoteRequest(server *raft.Server, peer *raft.Peer, req *raft.RequestVoteRequest) (*raft.RequestVoteResponse, error) {
 	var rvrsp *raft.RequestVoteResponse
 	var b bytes.Buffer
 	json.NewEncoder(&b).Encode(req)
@@ -240,7 +245,7 @@ func GetLogHttpHandler(w http.ResponseWriter, req *http.Request) {
 
 func JoinHttpHandler(w http.ResponseWriter, req *http.Request) {
 	debug("[recv] POST http://%v/join", server.Name())
-	command := &raft.JoinCommand{}
+	command := &joinCommand{}
 	if err := decodeJsonRequest(req, command); err == nil {
 		if err = server.Do(command); err != nil {
 			warn("raftd: Unable to join: %v", err)
@@ -297,11 +302,36 @@ func WriteFileHttpHandler(w http.ResponseWriter, req *http.Request) {
 	command := &WriteFileCommand{}
 	command.Filename = vars["filename"]
 	command.Content = string(content)
-	if err = server.Do(command); err != nil {
-		warn("raftd: Unable to write file: %v", err)
-		w.WriteHeader(http.StatusInternalServerError)
-	} else {
-		w.WriteHeader(http.StatusOK)
+
+	// unlikely to fail twice
+	for {
+		if server.State() == "leader" {
+			if err = server.Do(command); err != nil {
+				warn("raftd: Unable to write file: %v", err)
+				w.WriteHeader(http.StatusInternalServerError)
+			} else {
+				// good to go
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+		} else {
+			// forward
+			b := bytes.NewBuffer(content)
+			leaderName := server.GetLeader()
+			if leaderName =="" {
+				// no luckey, during the voting process
+				continue
+			} 
+			debug("[send] POST http://%v/files/%s", leaderName, vars["filename"])
+			_, err := http.Post(fmt.Sprintf("http://%v/files/%s", leaderName, vars["filename"]), "application/json", b)
+			if err != nil {
+				// should check other errors
+				continue
+			} else {
+				//good to go
+				return
+			}
+		}
 	}
 }
 
@@ -390,7 +420,23 @@ func (c *WriteFileCommand) Validate(server *raft.Server) error {
 }
 
 // Writes the contents to the file.
-func (c *WriteFileCommand) Apply(server *raft.Server) {
+func (c *WriteFileCommand) Apply(server *raft.Server) error{
 	path := fmt.Sprintf("%s/%s", server.Path(), c.Filename)
-	ioutil.WriteFile(path, []byte(c.Content), 0644)
+	return ioutil.WriteFile(path, []byte(c.Content), 0644)
+}
+
+//
+
+// joinCommand
+type joinCommand struct {
+	Name string `json:"name"`
+}
+
+func (c *joinCommand) CommandName() string {
+	return "join"
+}
+
+func (c *joinCommand) Apply(server *raft.Server) error {
+	err := server.AddPeer(c.Name)
+	return err
 }
