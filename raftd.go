@@ -90,7 +90,7 @@ func main() {
 	t := transHandler{}
 
 	// Setup new raft server.
-	server, err = raft.NewServer(name, path, t)
+	server, err = raft.NewServer(name, path, t, nil)
 	//server.DoHandler = DoHandler;
 	server.SetElectionTimeout(2 * time.Second)
 	server.SetHeartbeatTimeout(1 * time.Second)
@@ -317,7 +317,7 @@ func WriteFileHttpHandler(w http.ResponseWriter, req *http.Request) {
 		} else {
 			// forward
 			b := bytes.NewBuffer(content)
-			leaderName := server.GetLeader()
+			leaderName := server.Leader()
 			if leaderName =="" {
 				// no luckey, during the voting process
 				continue
