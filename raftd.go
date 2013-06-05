@@ -112,7 +112,9 @@ func main() {
 			fmt.Println("success join")
 		}
 	}
-	go server.Snapshot()
+	// open snapshot
+	//go server.Snapshot()
+	
 	// Create HTTP interface.
     r := mux.NewRouter()
     r.HandleFunc("/join", JoinHttpHandler).Methods("POST")
