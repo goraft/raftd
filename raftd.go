@@ -109,15 +109,19 @@ func main() {
 			server.Initialize()
 		} else {
 			join(server)
+			fmt.Println("success join")
 		}
 	}
-
+	// open snapshot
+	//go server.Snapshot()
+	
 	// Create HTTP interface.
     r := mux.NewRouter()
     r.HandleFunc("/join", JoinHttpHandler).Methods("POST")
     r.HandleFunc("/vote", VoteHttpHandler).Methods("POST")
     r.HandleFunc("/log", GetLogHttpHandler).Methods("GET")
     r.HandleFunc("/log/append", AppendEntriesHttpHandler).Methods("POST")
+    r.HandleFunc("/snapshot", SnapshotHttpHandler).Methods("POST")
     r.HandleFunc("/files/{filename}", ReadFileHttpHandler).Methods("GET")
     r.HandleFunc("/files/{filename}", WriteFileHttpHandler).Methods("POST")
     http.Handle("/", r)
@@ -208,10 +212,12 @@ func (t transHandler) SendAppendEntriesRequest(server *raft.Server, peer *raft.P
 	debug("[send] POST http://%s/log/append [%d]", peer.Name(), len(req.Entries))
 	resp, err := http.Post(fmt.Sprintf("http://%s/log/append", peer.Name()), "application/json", &b)
 	if resp != nil {
+		defer resp.Body.Close()
 		aersp = &raft.AppendEntriesResponse{}
 		if err = json.NewDecoder(resp.Body).Decode(&aersp); err == nil || err == io.EOF {
 			return aersp, nil
 		}
+		
 	}
 	return aersp, fmt.Errorf("raftd: Unable to append entries: %v", err)
 }
@@ -224,12 +230,33 @@ func (t transHandler) SendVoteRequest(server *raft.Server, peer *raft.Peer, req 
 	debug("[send] POST http://%s/vote", peer.Name())
 	resp, err := http.Post(fmt.Sprintf("http://%s/vote", peer.Name()), "application/json", &b)
 	if resp != nil {
+		defer resp.Body.Close()
 		rvrsp := &raft.RequestVoteResponse{}
 		if err = json.NewDecoder(resp.Body).Decode(&rvrsp); err == nil || err == io.EOF {
 			return rvrsp, nil
 		}
+		
 	}
 	return rvrsp, fmt.Errorf("raftd: Unable to request vote: %v", err)
+}
+
+// Sends SnapshotRequest RPCs to a peer when the server is the candidate.
+func (t transHandler) SendSnapshotRequest(server *raft.Server, peer *raft.Peer, req *raft.SnapshotRequest) (*raft.SnapshotResponse, error) {
+	var aersp *raft.SnapshotResponse
+	var b bytes.Buffer
+	json.NewEncoder(&b).Encode(req)
+	debug("[send] POST http://%s/snapshot [%d %d]", peer.Name(), req.LastTerm, req.LastIndex)
+	resp, err := http.Post(fmt.Sprintf("http://%s/snapshot", peer.Name()), "application/json", &b)
+	if resp != nil {
+		defer resp.Body.Close()
+		aersp = &raft.SnapshotResponse{}
+		if err = json.NewDecoder(resp.Body).Decode(&aersp); err == nil || err == io.EOF {
+
+			return aersp, nil
+		}
+	}
+	fmt.Println("error send snapshot")
+	return aersp, fmt.Errorf("raftd: Unable to send snapshot: %v", err)
 }
 
 //--------------------------------------
@@ -281,10 +308,28 @@ func AppendEntriesHttpHandler(w http.ResponseWriter, req *http.Request) {
 		if resp, _ := server.AppendEntries(aereq); resp != nil {
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(resp)
+			if !resp.Success {
+				fmt.Println("append error")
+			}
 			return
 		}
 	}
 	warn("[append] ERROR: %v", err)
+	w.WriteHeader(http.StatusInternalServerError)
+}
+
+func SnapshotHttpHandler(w http.ResponseWriter, req *http.Request) {
+	aereq := &raft.SnapshotRequest{}
+	err := decodeJsonRequest(req, aereq)
+	if err == nil {
+		debug("[recv] POST http://%s/snapshot/ ", server.Name())
+		if resp, _ := server.SnapshotRecovery(aereq.LastIndex, aereq.LastTerm, aereq.MachineState); resp != nil {
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(resp)
+			return
+		}
+	}
+	warn("[snapshot] ERROR: %v", err)
 	w.WriteHeader(http.StatusInternalServerError)
 }
 
