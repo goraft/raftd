@@ -1,6 +1,8 @@
 raftd
 =====
 
+*NOTE: The go-raft library is being heavily refactored. Until that project stabilizes, raftd will not be kept up to date.*
+
 ## Overview
 
 The raftd server is a reference implementation for using the [go-raft](https://github.com/benbjohnson/go-raft) library.
