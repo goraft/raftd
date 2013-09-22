@@ -5,7 +5,7 @@ raftd
 
 ## Overview
 
-The raftd server is a reference implementation for using the [go-raft](https://github.com/benbjohnson/go-raft) library.
+The raftd server is a reference implementation for using the [goraft](https://github.com/goraft/raft) library.
 This library provides a distributed consensus protocol based on the Raft protocol as described by Diego Ongaro and John Ousterhout in their paper, [In Search of an Understandable Consensus Algorithm](https://ramcloud.stanford.edu/wiki/download/attachments/11370504/raft.pdf).
 This protocol is based on Paxos but is architected to be more understandable.
 It is similar to other log-based distributed consensus systems such as [Google's Chubby](https://www.google.com/url?sa=t&rct=j&q=&esrc=s&source=web&cd=1&ved=0CDAQFjAA&url=http%3A%2F%2Fresearch.google.com%2Farchive%2Fchubby.html&ei=i9OGUerTJKbtiwLkiICoCQ&usg=AFQjCNEmFWlaB_iXQfEjMcMwPaYTphO6bA&sig2=u1vefM2ZOZu_ZVIZGynt1A&bvm=bv.45960087,d.cGE) or [Heroku's doozerd](https://github.com/ha/doozerd).
@@ -20,7 +20,7 @@ The directory will store the Raft log, some basic info about the server name and
 First, install raftd:
 
 ```sh
-$ go get github.com/benbjohnson/raftd
+$ go get github.com/goraft/raftd
 ```
 
 Then run `raftd` and provide a directory to store the data.

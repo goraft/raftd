@@ -2,8 +2,8 @@ package main
 
 import (
 	"flag"
-	"github.com/benbjohnson/raftd/command"
-	"github.com/benbjohnson/raftd/server"
+	"github.com/goraft/raftd/command"
+	"github.com/goraft/raftd/server"
 	"github.com/goraft/raft"
 	"log"
 	"math/rand"

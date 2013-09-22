@@ -1,7 +1,7 @@
 package command
 
 import (
-	"github.com/benbjohnson/raftd/db"
+	"github.com/goraft/raftd/db"
 	"github.com/goraft/raft"
 )
 
