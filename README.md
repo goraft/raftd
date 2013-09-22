@@ -50,6 +50,39 @@ $ raftd -p 4002 -join localhost:4001 ~/node.2
 
 When you restart the node, it's already been joined to the cluster so you can remove the `-join` argument.
 
+Finally, you can add one more node:
+
+```sh
+$ raftd -p 4003 -join localhost:4001 ~/node.3
+```
+
+Now when you set values to the leader:
+
+```sh
+$ curl -XPOST localhost:4001/db/foo -d 'bar'
+```
+
+The values will be propagated to the followers:
+
+```sh
+$ curl localhost:4001/db/foo
+bar
+$ curl localhost:4002/db/foo
+bar
+$ curl localhost:4003/db/foo
+bar
+```
+
+Killing the leader will automatically elect a new leader.
+If you kill and restart the first node and try to set a value you'll receive:
+
+```sh
+$ curl -XPOST localhost:4001/db/foo -d 'bar'
+raft.Server: Not current leader
+```
+
+Leader forwarding is not implemented in the reference implementation.
+
 
 ## Debugging
 
