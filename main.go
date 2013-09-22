@@ -12,6 +12,7 @@ import (
 )
 
 var verbose bool
+var trace bool
 var debug bool
 var host string
 var port int
@@ -19,6 +20,7 @@ var join string
 
 func init() {
 	flag.BoolVar(&verbose, "v", false, "verbose logging")
+	flag.BoolVar(&trace, "trace", false, "Raft trace debugging")
 	flag.BoolVar(&debug, "debug", false, "Raft debugging")
 	flag.StringVar(&host, "h", "localhost", "hostname")
 	flag.IntVar(&port, "p", 4001, "port")
@@ -31,7 +33,10 @@ func main() {
 	if verbose {
 		log.Print("Verbose logging enabled.")
 	}
-	if debug {
+	if trace {
+		raft.SetLogLevel(raft.Trace)
+		log.Print("Raft trace debugging enabled.")
+	} else if debug {
 		raft.SetLogLevel(raft.Debug)
 		log.Print("Raft debugging enabled.")
 	}

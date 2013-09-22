@@ -11,14 +11,15 @@ import (
 	"io/ioutil"
 	"log"
 	"math/rand"
-	"net"
 	"net/http"
+	"path/filepath"
 	"sync"
 )
 
 // The raftd server is a combination of the Raft server and an HTTP
 // server which acts as the transport.
 type Server struct {
+	name       string
 	host       string
 	port       int
 	path       string
@@ -31,13 +32,25 @@ type Server struct {
 
 // Creates a new server.
 func New(path string, host string, port int) *Server {
-	return &Server{
+	s := &Server{
 		host:   host,
 		port:   port,
 		path:   path,
 		db: db.New(),
 		router: mux.NewRouter(),
 	}
+
+	// Read existing name or generate a new one.
+	if b, err := ioutil.ReadFile(filepath.Join(path, "name")); err == nil {
+		s.name = string(b)
+	} else {
+		s.name = fmt.Sprintf("%07x", rand.Int())[0:7]
+		if err = ioutil.WriteFile(filepath.Join(path, "name"), []byte(s.name), 0644); err != nil {
+			panic(err)
+		}
+	}
+
+	return s
 }
 
 // Returns the connection string.
@@ -51,12 +64,9 @@ func (s *Server) ListenAndServe(leader string) error {
 
 	log.Printf("Initializing Raft Server: %s", s.path)
 
-	// Generate a name if it's a new node.
-	name := fmt.Sprintf("%07x", rand.Int())[0:7]
-
 	// Initialize and start Raft server.
 	transporter := raft.NewHTTPTransporter("/raft")
-	s.raftServer, err = raft.NewServer(name, s.path, transporter, nil, s.db, "")
+	s.raftServer, err = raft.NewServer(s.name, s.path, transporter, nil, s.db, "")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -65,17 +75,12 @@ func (s *Server) ListenAndServe(leader string) error {
 
 	// Join to leader if specified.
 	if leader != "" {
-		log.Println("Attempting to join leader: %s", leader)
+		log.Println("Attempting to join leader:", leader)
 
 		if !s.raftServer.IsLogEmpty() {
 			log.Fatal("Cannot join with an existing log")
 		}
-
-		joinHost, joinPort, err := net.SplitHostPort(leader)
-		if err != nil {
-			log.Fatal(err)
-		}
-		if err := s.Join(joinHost, joinPort); err != nil {
+		if err := s.Join(leader); err != nil {
 			log.Fatal(err)
 		}
 
@@ -90,6 +95,7 @@ func (s *Server) ListenAndServe(leader string) error {
 		if err != nil {
 			log.Fatal(err)
 		}
+
 	} else {
 		log.Println("Recovered from log")
 	}
@@ -104,9 +110,9 @@ func (s *Server) ListenAndServe(leader string) error {
 
 	s.router.HandleFunc("/db/{key}", s.readHandler).Methods("GET")
 	s.router.HandleFunc("/db/{key}", s.writeHandler).Methods("POST")
-	s.router.HandleFunc("/join", s.writeHandler).Methods("POST")
+	s.router.HandleFunc("/join", s.joinHandler).Methods("POST")
 
-	log.Println("Listening at: %s", s.connectionString())
+	log.Println("Listening at:", s.connectionString())
 
 	return s.httpServer.ListenAndServe()
 }
@@ -117,8 +123,8 @@ func (s *Server) HandleFunc(pattern string, handler func(http.ResponseWriter, *h
 	s.router.HandleFunc(pattern, handler)
 }
 
-// Joins to an existing cluster given the leader's host and port.
-func (s *Server) Join(host string, port string) error {
+// Joins to the leader of an existing cluster.
+func (s *Server) Join(leader string) error {
 	command := &raft.DefaultJoinCommand{
 		Name:             s.raftServer.Name(),
 		ConnectionString: s.connectionString(),
@@ -126,7 +132,7 @@ func (s *Server) Join(host string, port string) error {
 
 	var b bytes.Buffer
 	json.NewEncoder(&b).Encode(command)
-	resp, err := http.Post(fmt.Sprintf("http://%s:%s/join", host, port), "application/json", &b)
+	resp, err := http.Post(fmt.Sprintf("http://%s/join", leader), "application/json", &b)
 	resp.Body.Close()
 	if err != nil {
 		return err
@@ -137,6 +143,7 @@ func (s *Server) Join(host string, port string) error {
 
 func (s *Server) joinHandler(w http.ResponseWriter, req *http.Request) {
 	command := &raft.DefaultJoinCommand{}
+
 	if err := json.NewDecoder(req.Body).Decode(&command); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
