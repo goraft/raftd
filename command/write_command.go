@@ -25,7 +25,7 @@ func (c *WriteCommand) CommandName() string {
 }
 
 // Writes a value to a key.
-func (c *WriteCommand) Apply(server *raft.Server) (interface{}, error) {
+func (c *WriteCommand) Apply(server raft.Server) (interface{}, error) {
 	db := server.Context().(*db.DB)
 	db.Put(c.Key, c.Value)
 	return nil, nil
