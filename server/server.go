@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/goraft/raft"
 	"github.com/goraft/raftd/command"
 	"github.com/goraft/raftd/db"
-	"github.com/goraft/raft"
 	"github.com/gorilla/mux"
 	"io/ioutil"
 	"log"
@@ -36,7 +36,7 @@ func New(path string, host string, port int) *Server {
 		host:   host,
 		port:   port,
 		path:   path,
-		db: db.New(),
+		db:     db.New(),
 		router: mux.NewRouter(),
 	}
 
@@ -73,8 +73,9 @@ func (s *Server) ListenAndServe(leader string) error {
 	transporter.Install(s.raftServer, s)
 	s.raftServer.Start()
 
-	// Join to leader if specified.
 	if leader != "" {
+		// Join to leader if specified.
+
 		log.Println("Attempting to join leader:", leader)
 
 		if !s.raftServer.IsLogEmpty() {
@@ -84,8 +85,9 @@ func (s *Server) ListenAndServe(leader string) error {
 			log.Fatal(err)
 		}
 
-	// Initialize the server by joining itself.
 	} else if s.raftServer.IsLogEmpty() {
+		// Initialize the server by joining itself.
+
 		log.Println("Initializing new cluster")
 
 		_, err := s.raftServer.Do(&raft.DefaultJoinCommand{
