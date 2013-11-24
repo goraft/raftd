@@ -2,9 +2,9 @@ package main
 
 import (
 	"flag"
+	"github.com/goraft/raft"
 	"github.com/goraft/raftd/command"
 	"github.com/goraft/raftd/server"
-	"github.com/goraft/raft"
 	"log"
 	"math/rand"
 	"os"
@@ -41,7 +41,7 @@ func main() {
 		log.Print("Raft debugging enabled.")
 	}
 
-    rand.Seed(time.Now().UnixNano())
+	rand.Seed(time.Now().UnixNano())
 
 	// Setup commands.
 	raft.RegisterCommand(&command.WriteCommand{})
