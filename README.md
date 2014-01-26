@@ -84,6 +84,17 @@ raft.Server: Not current leader
 Leader forwarding is not implemented in the reference implementation.
 
 
+## FAQ
+
+### Why is command forwarding not implemented?
+
+Command forwarding is a nice feature to have because it allows a client to send a command to any server and have it pushed to the current leader. This lets your client code stay simple. However, now you have an additional point of failure in your remote call. If the intermediate server crashes while delivering the command then your client will still need to know how to retry its command. Since this retry logic needs to be in your client code, adding command forwarding doesn't provide any benefit.
+
+### Why isn't feature X implemented?
+
+Raftd is meant to be a basic reference implementation. As such, it's aim is to provide the smallest, simplest implementation required to get someone off the ground and using go-raft in their project. If you have questions on how to implement a given feature, please add a Github Issue and we can provide instructions in this README.
+
+
 ## Debugging
 
 If you want to see more detail then you can specify several options for logging:
