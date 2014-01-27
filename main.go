@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"github.com/goraft/raft"
 	"github.com/goraft/raftd/command"
 	"github.com/goraft/raftd/server"
@@ -25,6 +26,10 @@ func init() {
 	flag.StringVar(&host, "h", "localhost", "hostname")
 	flag.IntVar(&port, "p", 4001, "port")
 	flag.StringVar(&join, "join", "", "host:port of leader to join")
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s [arguments] <data-path> \n", os.Args[0])
+		flag.PrintDefaults()
+	}
 }
 
 func main() {
@@ -48,6 +53,7 @@ func main() {
 
 	// Set the data directory.
 	if flag.NArg() == 0 {
+		flag.Usage()
 		log.Fatal("Data path argument required")
 	}
 	path := flag.Arg(0)
