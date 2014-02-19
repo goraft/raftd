@@ -41,7 +41,7 @@ To start the first node in your cluster, simply specify a port and a directory w
 $ raftd -p 4001 ~/node.1
 ```
 
-To add nodes to the cluster, you'll need to start on a different port and use a different data diretory.
+To add nodes to the cluster, you'll need to start on a different port and use a different data directory.
 You'll also need to specify the host/port of the leader of the cluster to join:
 
 ```sh
