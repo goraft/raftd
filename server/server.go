@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 // The raftd server is a combination of the Raft server and an HTTP
@@ -65,7 +66,7 @@ func (s *Server) ListenAndServe(leader string) error {
 	log.Printf("Initializing Raft Server: %s", s.path)
 
 	// Initialize and start Raft server.
-	transporter := raft.NewHTTPTransporter("/raft")
+	transporter := raft.NewHTTPTransporter("/raft", 200*time.Millisecond)
 	s.raftServer, err = raft.NewServer(s.name, s.path, transporter, nil, s.db, "")
 	if err != nil {
 		log.Fatal(err)
