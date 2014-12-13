@@ -92,7 +92,7 @@ Command forwarding is a nice feature to have because it allows a client to send 
 
 ### Why isn't feature X implemented?
 
-Raftd is meant to be a basic reference implementation. As such, it's aim is to provide the smallest, simplest implementation required to get someone off the ground and using go-raft in their project. If you have questions on how to implement a given feature, please add a Github Issue and we can provide instructions in this README.
+Raftd is meant to be a basic reference implementation. As such, its aim is to provide the smallest, simplest implementation required to get someone off the ground and using go-raft in their project. If you have questions on how to implement a given feature, please add a Github Issue and we can provide instructions in this README.
 
 
 ## Debugging
