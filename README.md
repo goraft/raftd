@@ -1,6 +1,15 @@
 raftd
 =====
 
+![unmaintained](http://img.shields.io/badge/status-unmaintained-red.png)
+
+**NOTE**: This project is unmaintained. If you are using goraft in a project
+and want to carry the project forward please file an issue with your ideas and
+intentions. The original project authors have created new raft implementations
+now used in [etcd](https://godoc.org/github.com/coreos/etcd/raft) and [InfluxDB](https://godoc.org/github.com/influxdb/influxdb/raft).
+
+If you want to see a simple raft key-value store see the [etcd/raft example](https://github.com/coreos/etcd/tree/master/contrib/raftexample).
+
 ## Overview
 
 The raftd server is a reference implementation for using the [goraft](https://github.com/goraft/raft) library.
